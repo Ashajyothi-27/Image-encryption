@@ -1,0 +1,287 @@
+clc;
+clear all;
+close all;
+
+% Step 1: Define the directory containing the images
+image_dir = 'C:\Users\ashaj\OneDrive\Desktop\images'; % Replace with your directory path
+image_files = {'Lena.jpg', 'Mandrill.jpg', 'peppers.jpg'}; % Specify the image filenames directly
+
+% Step 2: Define the KAA chaotic map parameters
+alpha = 0.4; % Chaos parameter (can be tuned)
+x0 = 0.6; % Initial condition for the KAA map
+logistic_r = 3.9; % Logistic map parameter (can be tuned)
+
+% Step 3: Set the block size (process image in smaller blocks)
+block_size = [256, 256]; % Define block size (e.g., 256x256)
+
+% Step 4: Define the full path for the output directories
+output_dir = 'C:\Users\ashaj\OneDrive\Desktop\output'; % You can specify any path here
+encrypted_dir = fullfile(output_dir, 'encrypted_images');
+
+% Create output directories if they don't exist
+if ~exist(encrypted_dir, 'dir')
+    mkdir(encrypted_dir);
+end
+
+
+% Step 5: Loop over each image in the list
+for k = 1:length(image_files)
+    % Load the image and separate the RGB channels
+    img = imread(fullfile(image_dir, image_files{k})); % Read image from directory
+    [height, width, ~] = size(img); % Get image dimensions
+    R = img(:,:,1); % Red channel
+    G = img(:,:,2); % Green channel
+    B = img(:,:,3); % Blue channel
+
+    % Initialize encrypted channels
+    R_encrypted = zeros(size(R), 'uint8');
+    G_encrypted = zeros(size(G), 'uint8');
+    B_encrypted = zeros(size(B), 'uint8');
+    % Step 6: Start measuring encryption time
+    tic; % Start measuring time
+    % Step 6: Process the image in blocks
+    for i = 1:block_size(1):height
+        for j = 1:block_size(2):width
+            % Define block boundaries for each channel, making sure we don't exceed the image size
+            R_block = R(i:min(i+block_size(1)-1, height), j:min(j+block_size(2)-1, width));
+            G_block = G(i:min(i+block_size(1)-1, height), j:min(j+block_size(2)-1, width));
+            B_block = B(i:min(i+block_size(1)-1, height), j:min(j+block_size(2)-1, width));
+
+            % Generate chaotic sequences for each block, matching block size
+            N_block = numel(R_block);  % Number of elements in the block
+
+            % First key: Combination of 2D Logistic Sine map and LCG
+            key_1_R = generate_first_key(N_block, 1); % Red channel key
+            key_1_G = generate_first_key(N_block, 2); % Green channel key
+            key_1_B = generate_first_key(N_block, 3); % Blue channel key
+
+            % Second key: Combination of Tent map, Bernoulli map and KAA map
+            key_2_R = generate_second_key(alpha, x0, logistic_r, N_block, 1); % Red channel key
+            key_2_G = generate_second_key(alpha + 0.1, x0 + 0.1, logistic_r + 0.1, N_block, 2); % Green channel key
+            key_2_B = generate_second_key(alpha - 0.1, x0 - 0.1, logistic_r - 0.1, N_block, 3); % Blue channel key
+            
+            % Apply scaling to ensure the key values are within proper range (0-255)
+            key_1_R = mod(key_1_R, 255);
+            key_1_G = mod(key_1_G, 255);
+            key_1_B = mod(key_1_B, 255);
+            key_2_R = mod(key_2_R, 255);
+            key_2_G = mod(key_2_G, 255);
+            key_2_B = mod(key_2_B, 255);
+
+            % Additional permutation step before XOR (for improved diffusion)
+            perm_key_1_R = permutation(key_1_R);
+            perm_key_1_G = permutation(key_1_G);
+            perm_key_1_B = permutation(key_1_B);
+
+            perm_key_2_R = permutation(key_2_R);
+            perm_key_2_G = permutation(key_2_G);
+            perm_key_2_B = permutation(key_2_B);
+
+            % Encrypt each channel with the combined keys (XOR operation with permutation)
+            R_block_encrypted = bitxor(uint8(R_block(:)), uint8(perm_key_1_R(:)));
+            R_block_encrypted = bitxor(R_block_encrypted, uint8(perm_key_2_R(:)));
+
+            G_block_encrypted = bitxor(uint8(G_block(:)), uint8(perm_key_1_G(:)));
+            G_block_encrypted = bitxor(G_block_encrypted, uint8(perm_key_2_G(:)));
+
+            B_block_encrypted = bitxor(uint8(B_block(:)), uint8(perm_key_1_B(:)));
+            B_block_encrypted = bitxor(B_block_encrypted, uint8(perm_key_2_B(:)));
+
+            % Reshape back to the block size after encryption
+            R_block_encrypted = reshape(R_block_encrypted, size(R_block));
+            G_block_encrypted = reshape(G_block_encrypted, size(G_block));
+            B_block_encrypted = reshape(B_block_encrypted, size(B_block));
+
+            % Store the encrypted block in the final encrypted image
+            R_encrypted(i:min(i+block_size(1)-1, height), j:min(j+block_size(2)-1, width)) = R_block_encrypted;
+            G_encrypted(i:min(i+block_size(1)-1, height), j:min(j+block_size(2)-1, width)) = G_block_encrypted;
+            B_encrypted(i:min(i+block_size(1)-1, height), j:min(j+block_size(2)-1, width)) = B_block_encrypted;
+        end
+    end
+    
+    % Step 7: Post-process encrypted image to enhance clarity (optional)
+    encrypted_img = cat(3, R_encrypted, G_encrypted, B_encrypted);
+     % Step 6: Stop measuring encryption time
+    encryption_time = toc; % Stop measuring time
+    % Display encryption time for current image
+    %disp(['Encryption time for ', image_files{k}, ': ', num2str(encryption_time), ' seconds']);
+    % Step 8: Calculate entropy for the encrypted image channels
+    entropy_R_enc = entropy(R_encrypted);
+    entropy_G_enc = entropy(G_encrypted);
+    entropy_B_enc = entropy(B_encrypted);
+
+    % Calculate entropy for the entire encrypted image (all channels combined)
+    entropy_enc = entropy(encrypted_img);
+
+    % Display the entropy values for the encrypted image
+    disp(['Entropy (Encrypted) for ', image_files{k}, ':']);
+    disp(['Red Channel: ', num2str(entropy_R_enc)]);
+    disp(['Green Channel: ', num2str(entropy_G_enc)]);
+    disp(['Blue Channel: ', num2str(entropy_B_enc)]);
+    disp(['Total Entropy (Encrypted Image): ', num2str(entropy_enc)]);
+
+    % Step 9: Display the original and encrypted image in separate figures
+    figure(k*2-1); % Alternate figures for plain and encrypted images
+    subplot(1, 2, 1); % Original image
+    imshow(img);
+    title(['Original Image: ', image_files{k}]);
+
+    subplot(1, 2, 2); % Encrypted image
+    imshow(encrypted_img);
+    title(['Encrypted Image: ', image_files{k}]);
+    % Step 11: Compute correlation coefficients for the original and encrypted images (for the whole image, not channels)
+    % Compute correlation for the original image in horizontal, vertical, and diagonal directions
+    corr_h_orig = compute_image_correlation(img, 'horizontal');
+    
+    corr_d_orig = compute_image_correlation(img, 'diagonal');
+    corr_v_orig = compute_image_correlation(img, 'vertical');
+
+    % Encrypt the image as before (assuming encryption steps above are unchanged)
+    encrypted_img = cat(3, R_encrypted, G_encrypted, B_encrypted);  % Combine encrypted channels into final encrypted image
+
+    % Compute correlation for the encrypted image in horizontal, vertical, and diagonal directions
+    corr_h_enc = compute_image_correlation(encrypted_img, 'horizontal');
+    corr_v_enc = compute_image_correlation(encrypted_img, 'vertical');
+    corr_d_enc = compute_image_correlation(encrypted_img, 'diagonal');
+
+    % Display the correlation coefficients for the original and encrypted images
+    disp(['Correlation Coefficients for ', image_files{k}]);
+    disp('Original Image Correlation Coefficients:');
+    disp(['Horizontal: ', num2str(corr_h_orig)]);
+
+    disp(['Diagonal: ', num2str(corr_d_orig)]);
+    disp(['Vertical: ', num2str(corr_v_orig)]);
+
+    disp('Encrypted Image Correlation Coefficients:');
+    disp(['Horizontal: ', num2str(corr_h_enc)]);
+    
+    disp(['Diagonal: ', num2str(corr_d_enc)]);
+    disp(['Vertical: ', num2str(corr_v_enc)]);
+    disp('--------------------------');
+
+    % Step 10: Compute MSE and PSNR for each channel and total
+    % MSE for Red, Green, Blue channels
+    MSE_R = immse(R, R_encrypted);
+    MSE_G = immse(G, G_encrypted);
+    MSE_B = immse(B, B_encrypted);
+
+    % PSNR for Red, Green, Blue channels
+    PSNR_R = 10 * log10((255^2) / MSE_R);
+    PSNR_G = 10 * log10((255^2) / MSE_G);
+    PSNR_B = 10 * log10((255^2) / MSE_B);
+
+    % Total MSE and PSNR (for all channels)
+    MSE_total = (MSE_R + MSE_G + MSE_B) / 3;
+    PSNR_total = 10 * log10((255^2) / MSE_total);
+    % Calculate MAE for each channel
+MAE_R = mean(abs(double(R(:)) - double(R_encrypted(:))));
+MAE_G = mean(abs(double(G(:)) - double(G_encrypted(:))));
+MAE_B = mean(abs(double(B(:)) - double(B_encrypted(:))));
+
+% Total MAE for the entire image
+MAE_total = mean(abs(double(img(:)) - double(encrypted_img(:))));
+% Display the MSE, PSNR, and MAE values in the required format
+fprintf('%s\n', image_files{k}); % Display image name
+fprintf('red   mse %.4f    psnr %.4f \n   %.4f\n', MSE_R, PSNR_R );
+fprintf('green mse %.4f    psnr %.4f \n   %.4f\n', MSE_G, PSNR_G);
+fprintf('blue  mse %.4f    psnr %.4f  \n  %.4f\n', MSE_B, PSNR_B );
+fprintf('total MSE  %.4f\n', MSE_total);
+fprintf('total PSNR %.4f\n', PSNR_total);
+fprintf('total MAE  %.4f\n', MAE_total);
+fprintf('--------------------------\n');
+
+   
+
+    % Save the encrypted image
+    imwrite(encrypted_img, fullfile(encrypted_dir, ['encrypted_', image_files{k}]));
+
+    % Create Figure 2: Histograms of Red, Green, and Blue Channels for the Current Image
+    figure(k*2); % Alternate figures for histograms
+    % Red channel histograms (Original and Encrypted)
+    subplot(3, 2, 1);
+    histogram(R(:), 0:255, 'FaceColor', 'r', 'EdgeColor', 'r');
+    title(['Original - Red Channel: ', image_files{k}]);
+    xlabel('Pixel Value');
+    ylabel('Frequency');
+
+    subplot(3, 2, 2);
+    histogram(R_encrypted(:), 0:255, 'FaceColor', 'r', 'EdgeColor', 'r');
+    title(['Encrypted - Red Channel: ', image_files{k}]);
+    xlabel('Pixel Value');
+    ylabel('Frequency');
+
+    % Green channel histograms (Original and Encrypted)
+    subplot(3, 2, 3);
+    histogram(G(:), 0:255, 'FaceColor', 'g', 'EdgeColor', 'g');
+    title(['Original - Green Channel: ', image_files{k}]);
+    xlabel('Pixel Value');
+    ylabel('Frequency');
+
+    subplot(3, 2, 4);
+    histogram(G_encrypted(:), 0:255, 'FaceColor', 'g', 'EdgeColor', 'g');
+    title(['Encrypted - Green Channel: ', image_files{k}]);
+    xlabel('Pixel Value');
+    ylabel('Frequency');
+
+    % Blue channel histograms (Original and Encrypted)
+    subplot(3, 2, 5);
+    histogram(B(:), 0:255, 'FaceColor', 'b', 'EdgeColor', 'b');
+    title(['Original - Blue Channel: ', image_files{k}]);
+    xlabel('Pixel Value');
+    ylabel('Frequency');
+
+    subplot(3, 2, 6);
+    histogram(B_encrypted(:), 0:255, 'FaceColor', 'b', 'EdgeColor', 'b');
+    title(['Encrypted - Blue Channel: ', image_files{k}]);
+    xlabel('Pixel Value');
+    ylabel('Frequency');
+end
+
+
+% Helper function for first key (Logistic-Sine and LCG)
+function key = generate_first_key(N, idx)
+    % Define the logistic-sine and LCG parameters here
+    key = rand(1, N) * 255; % Dummy key generation (Replace with the actual method)
+end
+
+% Helper function for second key (Tent, Bernoulli and KAA maps)
+function key = generate_second_key(alpha, x0, logistic_r, N, idx)
+    key = rand(1, N) * 255; % Dummy key generation (Replace with the actual method)
+end
+
+% Helper function for permutation of key values
+function perm_key = permutation(key)
+    perm_key = key(randperm(numel(key))); % Simple random permutation (modify as needed)
+end
+% Helper function to compute correlation
+% Helper function to compute correlation
+function corr_val = compute_image_correlation(img, direction)
+    % Split the image into individual RGB channels
+    R = img(:,:,1);  % Red channel
+    G = img(:,:,2);  % Green channel
+    B = img(:,:,3);  % Blue channel
+    
+    % Compute correlation for each channel
+    if strcmp(direction, 'horizontal')
+        % Compute correlation in horizontal direction (row-wise)
+        corr_R = corr2(R, circshift(R, [0, 1])); % Shift columns for Red channel
+        corr_G = corr2(G, circshift(G, [0, 1])); % Shift columns for Green channel
+        corr_B = corr2(B, circshift(B, [0, 1])); % Shift columns for Blue channel
+    elseif strcmp(direction, 'vertical')
+        % Compute correlation in vertical direction (column-wise)
+        corr_R = corr2(R, circshift(R, [1, 0])); % Shift rows for Red channel
+        corr_G = corr2(G, circshift(G, [1, 0])); % Shift rows for Green channel
+        corr_B = corr2(B, circshift(B, [1, 0])); % Shift rows for Blue channel
+    elseif strcmp(direction, 'diagonal')
+        % Compute correlation in diagonal direction (both row and column shift)
+        corr_R = corr2(R, circshift(R, [1, 1])); % Shift diagonally for Red channel
+        corr_G = corr2(G, circshift(G, [1, 1])); % Shift diagonally for Green channel
+        corr_B = corr2(B, circshift(B, [1, 1])); % Shift diagonally for Blue channel
+    else
+        error('Invalid direction. Choose "horizontal", "vertical", or "diagonal".');
+    end
+    
+    % Average the correlation values of the three channels (optional)
+    corr_val = (corr_R + corr_G + corr_B) / 3;
+end
+
